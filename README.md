@@ -18,7 +18,7 @@ This repository contains the experiment code for the MPFC-DPC method built on to
 - `models/`
   - Teacher network definitions used by the generation scripts.
 - `ufc_validation/`
-  - Static and dynamic validation scripts.
+  - Static and dynamic validation scripts. Dynamic validation supports CIFAR-10, CIFAR-100, Tiny-ImageNet, and ImageNet-100.
 - `sh/`
   - Example commands for running the MPFC-DPC generation scripts.
 

@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import time
 import sys
@@ -13,6 +14,7 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
 import wandb
+from PIL import Image
 from mobilenetv2 import MobileNetV2_cifar100, MobileNetV2_cifar10, MobileNetV2_tiny_imagenet
 from efficientnet import EfficientNetB0_cifar100, EfficientNetB0_cifar10, EfficientNetB0_tiny_imagenet
 from shufflenet import ShuffleNetG2_cifar100, ShuffleNetG2_cifar10, ShuffleNet_tiny_imagenet_G2
@@ -22,7 +24,7 @@ from datetime import datetime
 from tinyimagenet import TinyImageNet
 
 parser = argparse.ArgumentParser(description="UFC: Validate with Dynamic Labeling")
-parser.add_argument("--dataset", default="cifar100", type=str, choices=["cifar10", "cifar100", "tiny"], help="Dataset")
+parser.add_argument("--dataset", default="cifar100", type=str, choices=["cifar10", "cifar100", "tiny", "imagenet100"], help="Dataset")
 parser.add_argument("--M", default=4, type=int, help="Number of architectures involved in UFC generation")
 parser.add_argument("--networks", default='resnet18', type=str, help="Model architecture: resnet18, resnet34, resnet50, resnet101, mobilenetV2, efficientnet, shufflenet")
 parser.add_argument("--epochs", default=200, type=int, help="Training epochs")
@@ -35,14 +37,21 @@ parser.add_argument("--output-dir", default="./save", type=str, help="Directory 
 parser.add_argument("--resume", "-r", action="store_true", help="Resume from checkpoint")
 parser.add_argument("--check-ckpt", default=None, type=str, help="Checkpoint to evaluate")
 parser.add_argument("--ipc", default=5, type=int, help="IPC setting")
+parser.add_argument("--ipc-total", default=None, type=int, help="Override generated images per class if it differs from the UFC formula")
+parser.add_argument("--imagenet100-class-list", default="data/wnids.txt", type=str, help="WordNet ID list for ImageNet-100")
+parser.add_argument("--imagenet100-num-class", default=100, type=int, help="Number of WordNet IDs to use for ImageNet-100")
+parser.add_argument("--imagenet-class-index", default="data/imagenet_class_index.json", type=str, help="ImageNet-1K class index JSON")
+parser.add_argument("--imagenet100-val-root", default="data/val", type=str, help="Tiny/ImageNet-style val directory for ImageNet-100")
 parser.add_argument('--wandb-project', type=str, default='UFC-validation', help='WandB project name')
 parser.add_argument('--wandb-api-key', type=str, default=None, help='WandB API key')
 parser.add_argument('--wandb-name', type=str, default="cifar100-ipc10", help='WandB run name')
  
 args = parser.parse_args()
 
-#init wandb 
-wandb.login(key=args.wandb_api_key)
+if args.wandb_api_key:
+    wandb.login(key=args.wandb_api_key)
+else:
+    os.environ.setdefault("WANDB_MODE", "offline")
 wandb.init(project=args.wandb_project, name=f"{args.wandb_name}_{datetime.now().strftime('%m/%d, %H:%M:%S')}")
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -59,6 +68,62 @@ start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
 # Data
 print("==> Preparing data..")
+def load_imagenet100_wnids(class_list, num_class):
+    with open(class_list, "r", encoding="utf-8") as f:
+        wnids = [line.strip() for line in f if line.strip()]
+    return wnids[:num_class]
+
+
+def load_imagenet_class_index(path):
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"{path} is required for ImageNet-100 dynamic labels. "
+            "Run the ImageNet-100 generation script once or provide --imagenet-class-index."
+        )
+    with open(path, "r", encoding="utf-8") as f:
+        class_index = json.load(f)
+    return {wnid: int(idx) for idx, (wnid, _) in class_index.items()}
+
+
+class ImageNet100Val(torch.utils.data.Dataset):
+    def __init__(self, root, wnids, transform=None):
+        self.root = root
+        self.transform = transform
+        self.wnid_to_local = {wnid: idx for idx, wnid in enumerate(wnids)}
+        annotations = os.path.join(root, "val_annotations.txt")
+        image_dir = os.path.join(root, "images")
+        self.samples = []
+
+        with open(annotations, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) < 2:
+                    continue
+                image_name, wnid = parts[0], parts[1]
+                if wnid in self.wnid_to_local:
+                    self.samples.append((os.path.join(image_dir, image_name), self.wnid_to_local[wnid]))
+
+        if not self.samples:
+            raise RuntimeError(f"No ImageNet-100 validation images found under {root}")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        path, target = self.samples[index]
+        image = Image.open(path).convert("RGB")
+        if self.transform is not None:
+            image = self.transform(image)
+        return image, target
+
+
+imagenet100_wnids = None
+imagenet100_teacher_indices = None
+if args.dataset == "imagenet100":
+    imagenet100_wnids = load_imagenet100_wnids(args.imagenet100_class_list, args.imagenet100_num_class)
+    wnid_to_imagenet_idx = load_imagenet_class_index(args.imagenet_class_index)
+    imagenet100_teacher_indices = torch.LongTensor([wnid_to_imagenet_idx[wnid] for wnid in imagenet100_wnids]).to(device)
+
 dataset_config = {
     "cifar10": {
         "num_classes": 10,
@@ -104,6 +169,20 @@ dataset_config = {
             transforms.Normalize((0.4802, 0.4481, 0.3975), (0.2302, 0.2265, 0.2262)),
         ]
     )        
+    },
+    "imagenet100": {
+        "num_classes": args.imagenet100_num_class,
+        "transform_test": transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        ]),
+        "transform_train": transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
     }
 }
 
@@ -111,8 +190,8 @@ transform_test = dataset_config[args.dataset]["transform_test"]
 transform_train = dataset_config[args.dataset]["transform_train"]
 num_classes = dataset_config[args.dataset]["num_classes"]
 
-args.ipc_init = int(args.ipc/(args.M/num_classes + 1))
-args.ipc_total = args.ipc_init * (args.M + 1)
+args.ipc_init = max(1, int(args.ipc/(args.M/num_classes + 1)))
+args.ipc_total = args.ipc_total if args.ipc_total is not None else args.ipc_init * (args.M + 1)
 
 def check_files_per_folder(path, ipc_total):
     if not os.path.exists(path):
@@ -142,6 +221,8 @@ trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, 
 
 if args.dataset == "tiny":
     testset = TinyImageNet(root="./data/", transform=transform_test)
+elif args.dataset == "imagenet100":
+    testset = ImageNet100Val(root=args.imagenet100_val_root, wnids=imagenet100_wnids, transform=transform_test)
 elif args.dataset == "cifar10":
     testset = torchvision.datasets.CIFAR10(root="../data", train=False, download=True, transform=transform_test)
 elif args.dataset == "cifar100":
@@ -152,36 +233,69 @@ else:
 testloader = torch.utils.data.DataLoader(testset, batch_size=128, shuffle=False, num_workers=2)
 
 print(f"Test loader size: {len(testloader)}")
-first_batch = next(iter(testloader))
-print(f"First batch inputs: {first_batch[0]}")
-print(f"First batch targets: {first_batch[1]}")
 
 print(f"==> Building model: {args.networks}")
-model_classes = {
-    "resnet18": torchvision.models.resnet18,
-    "resnet34": torchvision.models.resnet34,
-    "resnet50": torchvision.models.resnet50,
-    "resnet101": torchvision.models.resnet101,
-    "mobilenetV2": MobileNetV2_cifar100 if args.dataset == "cifar100" else MobileNetV2_cifar10,
-    "efficientnet": EfficientNetB0_cifar100 if args.dataset == "cifar100" else EfficientNetB0_cifar10,
-    "shufflenet": ShuffleNetG2_cifar100 if args.dataset == "cifar100" else ShuffleNetG2_cifar10,
-    # "mobilenetV2": MobileNetV2_tiny_imagenet if args.dataset == "tiny" else MobileNetV2_cifar100,
-    # "efficientnet": EfficientNetB0_tiny_imagenet if args.dataset == "tiny" else EfficientNetB0_cifar100,
-    # "shufflenet": ShuffleNet_tiny_imagenet_G2 if args.dataset == "tiny" else ShuffleNetG2_cifar100,
-}
+def build_student(network_name, dataset, num_classes):
+    if "resnet" in network_name:
+        model = getattr(torchvision.models, network_name)(num_classes=num_classes)
+        if dataset != "imagenet100":
+            model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+            model.maxpool = nn.Identity()
+        return model
 
-if "resnet" in args.networks:
-    model_student = model_classes[args.networks](num_classes=num_classes).to(device)
-    model_student.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-    model_student.maxpool = nn.Identity()
-else:
-    model_student = model_classes[args.networks]().to(device)
+    if dataset == "cifar10":
+        model_classes = {
+            "mobilenetV2": MobileNetV2_cifar10,
+            "efficientnet": EfficientNetB0_cifar10,
+            "shufflenet": ShuffleNetG2_cifar10,
+        }
+        return model_classes[network_name]()
+    if dataset == "cifar100":
+        model_classes = {
+            "mobilenetV2": MobileNetV2_cifar100,
+            "efficientnet": EfficientNetB0_cifar100,
+            "shufflenet": ShuffleNetG2_cifar100,
+        }
+        return model_classes[network_name]()
+    if dataset == "tiny":
+        model_classes = {
+            "mobilenetV2": MobileNetV2_tiny_imagenet,
+            "efficientnet": EfficientNetB0_tiny_imagenet,
+            "shufflenet": ShuffleNet_tiny_imagenet_G2,
+        }
+        return model_classes[network_name]()
+    if dataset == "imagenet100":
+        model_classes = {
+            "mobilenetV2": lambda: torchvision.models.mobilenet_v2(num_classes=num_classes),
+            "efficientnet": lambda: torchvision.models.efficientnet_b0(num_classes=num_classes),
+            "shufflenet": lambda: torchvision.models.shufflenet_v2_x1_0(num_classes=num_classes),
+        }
+        return model_classes[network_name]()
+    raise ValueError(f"Unsupported dataset/network: {dataset}/{network_name}")
+
+model_student = build_student(args.networks, args.dataset, num_classes).to(device)
 
 if device == "cuda":
     model_student = torch.nn.DataParallel(model_student)
     cudnn.benchmark = True
 
-# prepare archs for UFC
+def build_imagenet100_teachers():
+    specs = [
+        ("resnet18", torchvision.models.ResNet18_Weights.IMAGENET1K_V1),
+        ("mobilenet_v2", torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1),
+        ("efficientnet_b0", torchvision.models.EfficientNet_B0_Weights.IMAGENET1K_V1),
+    ]
+    teachers = []
+    for name, weights in specs:
+        model = torchvision.models.__dict__[name](weights=weights)
+        model = nn.DataParallel(model).cuda()
+        model.eval()
+        for p in model.parameters():
+            p.requires_grad = False
+        teachers.append(model)
+    return teachers
+
+
 dataset_models = {
     'cifar10': {
         'num_classes': 10,
@@ -242,14 +356,17 @@ dataset_models = {
     #     }
 }
 
-assert args.dataset in dataset_models, f"Unknown dataset: {args.dataset}"
-dataset_config = dataset_models[args.dataset]
-num_classes = dataset_config['num_classes']
-model_types = dataset_config['model_types']
-model_paths = dataset_config['model_paths']
-
 model_lists = []
-for model_type, model_path in zip(model_types, model_paths):
+if args.dataset == "imagenet100":
+    model_lists = build_imagenet100_teachers()
+else:
+    assert args.dataset in dataset_models, f"Unknown dataset: {args.dataset}"
+    dataset_config = dataset_models[args.dataset]
+    num_classes = dataset_config['num_classes']
+    model_types = dataset_config['model_types']
+    model_paths = dataset_config['model_paths']
+
+for model_type, model_path in zip(dataset_models.get(args.dataset, {}).get('model_types', []), dataset_models.get(args.dataset, {}).get('model_paths', [])):
     # if model_type == torchvision.models.resnet18:
     #     model_teacher = model_type(num_classes=num_classes)
     #     model_teacher.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
@@ -336,8 +453,10 @@ def train(epoch,wandb_metrics):
         for ii in range(len(model_lists)):
             model_teacher = model_lists[ii]
             soft_label = model_teacher(inputs).detach()
+            if args.dataset == "imagenet100":
+                soft_label = soft_label.index_select(1, imagenet100_teacher_indices)
             soft_label_avg.append(soft_label.clone().detach())
-        soft_label = sum(soft_label_avg)/len(model_lists)
+        soft_label = sum(soft_label_avg) / len(soft_label_avg)
 
         optimizer.zero_grad()
         outputs = model_student(inputs)
@@ -496,6 +615,5 @@ for epoch in range(start_epoch, start_epoch + args.epochs):
 end_time = time.time()
 wandb.finish()
 print(f"total time: {end_time - start_time} s")
-
 
 
