@@ -201,7 +201,7 @@ def get_images(args, model_lists, hook_for_display, ipc_id):
             edm_loss = euclidean_distribution_matching_loss(uni_perb, inputs_ori, feature_extractor)
 
             # Total loss
-            total_loss = loss_ce + loss_aux + cd_loss + cdm_loss + edm_loss
+            total_loss = loss_ce + loss_aux + (args.rcd * cd_loss) + (args.rcdm * cdm_loss) + (args.redm * edm_loss)
 
             if iteration % save_every == 0:
                 print("------------iteration {}----------".format(iteration))
@@ -353,6 +353,9 @@ def get_args():
     #new
     parser.add_argument("--easy2hard-mode", default="cosine", type=str, choices=["step", "linear", "cosine"])
     parser.add_argument("--milestone", default=0, type=float)
+    parser.add_argument("--rcd", default=1.0, type=float, help="Weight for cosine diversity loss")
+    parser.add_argument("--rcdm", default=1.0, type=float, help="Weight for cosine distribution matching loss")
+    parser.add_argument("--redm", default=0.5, type=float, help="Weight for euclidean distribution matching loss")
 
     # Parse arguments
     args = parser.parse_args()
@@ -379,7 +382,7 @@ if __name__ == "__main__":
     args = get_args()
 
     if not wandb.api.api_key:
-        wandb.login(key='')
+        os.environ.setdefault("WANDB_MODE", "offline")
     wandb.init(project='UFC-generation', name=args.wandb_name)
     global wandb_metrics
     wandb_metrics = {}

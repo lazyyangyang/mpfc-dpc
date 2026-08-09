@@ -294,7 +294,7 @@ if __name__ == "__main__":
     args = get_args()
 
     if not wandb.api.api_key:
-        wandb.login(key='')
+        os.environ.setdefault("WANDB_MODE", "offline")
     wandb.init(project='UFC-generation', name=args.wandb_name)
     global wandb_metrics
     wandb_metrics = {}
