@@ -1,0 +1,36 @@
+# Python/cache files
+__pycache__/
+*.py[cod]
+*.so
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+env/
+camdd/
+
+# Experiment data and outputs
+data/train/
+data/val/
+init_images/
+syn/*/
+merged_results/
+wandb/
+pre/
+pretrained/**/*.pth
+pretrained/**/*.pt
+*.pth
+*.pt
+*.ckpt
+
+# Local/server artifacts
+.autodl/
+.Trash-0/
+*.db
+*.swp
+*.log
+
+# OS/editor
+.DS_Store
+Thumbs.db
