@@ -8,6 +8,8 @@ This repository contains the experiment code for the MPFC-DPC method built on to
   - MPFC-DPC generation for CIFAR-10 and CIFAR-100.
 - `ufc_generation/ufc_cda_tiny_sam_dire.py`
   - MPFC-DPC generation for Tiny-ImageNet.
+- `ufc_generation/ufc_cda_imagenet100_sam_dire.py`
+  - MPFC-DPC generation for ImageNet-100 using ImageNet-1K pretrained teachers.
 - `ufc_generation/utils.py`
   - Shared generation utilities, including BN feature hooks, image clipping, denormalization, and saving.
 
@@ -30,4 +32,3 @@ Large or generated experiment artifacts are intentionally excluded:
 - synthetic generated images
 - W&B logs
 - Python caches and local server files
-

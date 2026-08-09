@@ -43,3 +43,19 @@ python ufc_generation/ufc_cda_tiny_sam_dire.py \
     --init_path init_images/tiny/ \
     --ipc 10 \
     --dataset tiny
+
+# ImageNet-100 example
+python ufc_generation/ufc_cda_imagenet100_sam_dire.py \
+    --iteration 1000 \
+    --r-bn 1 \
+    --batch-size 20 \
+    --lr 0.1 \
+    --exp-name generated_results \
+    --wandb-name imagenet100-ipc10-mpfc-dpc \
+    --store-best-images \
+    --syn-data-path syn/ \
+    --init_path init_images/tiny/ \
+    --class-list data/wnids.txt \
+    --ipc 10 \
+    --dataset imagenet100 \
+    --num-class 100
