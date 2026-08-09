@@ -307,7 +307,7 @@ if __name__ == "__main__":
         args.num_class = 1000
 
     # averaging UFC for fair comparison
-    args.ipc_init = int(args.ipc/(args.M/args.num_class + 1))
+    args.ipc_init = max(1, int(args.ipc/(args.M/args.num_class + 1)))
     args.ipc_end = args.ipc_init * (args.M + 1)
     print('ipc_end = ', args.ipc_end)
 

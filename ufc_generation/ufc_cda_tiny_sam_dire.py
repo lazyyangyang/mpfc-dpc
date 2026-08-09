@@ -124,7 +124,7 @@ def get_images(args, model_lists, hook_for_display, ipc_id):
         for kk in range(0, 200, batch_size):
             targets = targets_all[kk:min(kk + batch_size, 200)].to('cuda')
 
-            model_index = ipc_id // args.ipc_init - 1 
+            model_index = max(ipc_id // args.ipc_init - 1, 0)
             model_teacher = model_lists[model_index]
             loss_r_feature_layers = loss_packed_features[model_index]
 
@@ -397,7 +397,7 @@ if __name__ == "__main__":
         args.num_class = 200
 
     # averaging UFC for fair comparison
-    args.ipc_init = int(args.ipc/(args.M/args.num_class + 1))
+    args.ipc_init = max(1, int(args.ipc/(args.M/args.num_class + 1)))
     args.ipc_end = args.ipc_init * (args.M + 1)
     print('ipc_end = ', args.ipc_end)
 
