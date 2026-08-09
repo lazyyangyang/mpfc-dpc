@@ -4,7 +4,7 @@ set -e
 export CUDA_VISIBLE_DEVICES=0
 
 # CIFAR-10
-python ufc_generation/ufc_cda_cifar_sam_dire.py \
+python ufc_generation/mpfc-dpc_cifar10.py \
     --iteration 1500 \
     --r-bn 1 \
     --batch-size 10 \
@@ -23,7 +23,7 @@ python ufc_generation/ufc_cda_cifar_sam_dire.py \
     --redm 0.5
 
 # CIFAR-100
-python ufc_generation/ufc_cda_cifar_sam_dire.py \
+python ufc_generation/mpfc-dpc_cifar100.py \
     --iteration 1500 \
     --r-bn 1 \
     --batch-size 100 \
@@ -42,7 +42,7 @@ python ufc_generation/ufc_cda_cifar_sam_dire.py \
     --redm 0.5
 
 # Tiny-ImageNet
-python ufc_generation/ufc_cda_tiny_sam_dire.py \
+python ufc_generation/mpfc-dpc_tiny.py \
     --iteration 1500 \
     --r-bn 1 \
     --batch-size 100 \
@@ -61,7 +61,7 @@ python ufc_generation/ufc_cda_tiny_sam_dire.py \
     --redm 0.5
 
 # ImageNet-100
-python ufc_generation/ufc_cda_imagenet100_sam_dire.py \
+python ufc_generation/mpfc-dpc_imagenet100.py \
     --iteration 1500 \
     --r-bn 1 \
     --batch-size 20 \
